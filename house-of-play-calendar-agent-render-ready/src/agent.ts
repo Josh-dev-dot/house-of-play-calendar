@@ -42,14 +42,12 @@ function timeToMinutes(h: number, m: number) { return h * 60 + m; }
 
 function parseWeekEvents(text: string): CalendarEvent[] {
   const found: CalendarEvent[] = [];
-  const normalized = clean(text);
-
-  const dayRe = /\b(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)\s+(\d{1,2})\.\s*([A-ZÆØÅ]{3,})\b/gi;
+  const normalized = clean(text).replace(/\u00a0/g, " ");
+  const dayRe = /(?:^|\s)(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)\s+(\d{1,2})\.\s*([A-ZÆØÅ]{3,})\b/gi;
   const days = [...normalized.matchAll(dayRe)];
+  console.log(`CALENDAR PARSER: found ${days.length} day headers`);
   if (!days.length) return found;
 
-  // The calendar displays a week without a year. Use the current year and
-  // adjust around New Year so the displayed weekday/date combination matches.
   const now = new Date();
   const candidatesYears = [now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1];
 
@@ -63,30 +61,39 @@ function parseWeekEvents(text: string): CalendarEvent[] {
     const possible = candidatesYears
       .map(y => new Date(y, monNum - 1, dayNum))
       .filter(dt => dt.getDate() === dayNum && dt.getMonth() === monNum - 1);
-    const weekday = match[1].toLowerCase();
-    const exact = possible.find(dt => dt.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase() === weekday);
+    const exact = possible.find(dt =>
+      dt.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase() === match[1].toUpperCase()
+    );
     if (exact) year = exact.getFullYear();
 
     const date = `${year}-${String(monNum).padStart(2,"0")}-${String(dayNum).padStart(2,"0")}`;
-    const blockStart = match.index! + match[0].length;
-    const blockEnd = d + 1 < days.length ? days[d + 1].index! : normalized.length;
+    const blockStart = (match.index ?? 0) + match[0].length;
+    const blockEnd = d + 1 < days.length ? (days[d + 1].index ?? normalized.length) : normalized.length;
     const block = normalized.slice(blockStart, blockEnd);
 
-    const times = [...block.matchAll(/\b(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\b/g)];
+    const times = [...block.matchAll(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g)];
+    console.log(`CALENDAR PARSER: ${match[1]} ${dayNum} ${match[3]} -> ${date}: ${times.length} time ranges`);
+
     for (let i = 0; i < times.length; i++) {
       const t = times[i];
-      const afterTime = t.index! + t[0].length;
-      const nextTime = i + 1 < times.length ? times[i + 1].index! : block.length;
+      const afterTime = (t.index ?? 0) + t[0].length;
+      const nextTime = i + 1 < times.length ? (times[i + 1].index ?? block.length) : block.length;
       let segment = clean(block.slice(afterTime, nextTime));
       if (!segment) continue;
 
-      // Strip UI action/status text while preserving useful event metadata.
-      segment = segment
-        .replace(/\bSign up\b/gi, "")
-        .replace(/\bFully booked\b/gi, "Fully booked")
-        .replace(/\bJoin waitlist\b/gi, "Join waitlist")
-        .replace(/\s+/g, " ")
-        .trim();
+      const status = /\bFully booked\b/i.test(segment) ? "Fully booked" :
+        /\bJoin waitlist\b/i.test(segment) ? "Join waitlist" : "";
+      segment = segment.replace(/\bSign up\b/gi, "").replace(/\bFully booked\b/gi, "").replace(/\bJoin waitlist\b/gi, "").trim();
+
+      const priceMatch = segment.match(/\(([^)]*(?:kr|free|per couple)[^)]*)\)/i);
+      if (!priceMatch) {
+        console.log(`CALENDAR PARSER: skipped time ${t[0]} because no price block: ${segment.slice(0,160)}`);
+        continue;
+      }
+      const price = clean(priceMatch[1]);
+      const title = clean(segment.slice(0, priceMatch.index));
+      const facilitator = clean(segment.slice((priceMatch.index ?? 0) + priceMatch[0].length));
+      if (!title) continue;
 
       const startH = Number(t[1]), startM = Number(t[2]);
       const endH = Number(t[3]), endM = Number(t[4]);
@@ -98,46 +105,15 @@ function parseWeekEvents(text: string): CalendarEvent[] {
         endDate = next.toISOString().slice(0,10);
       }
       const end = localIso(endDate, endH, endM);
-
-      // Price is normally the first parenthesized chunk.
-      const priceMatch = segment.match(/\(([^)]*(?:kr|free|per couple)[^)]*)\)/i);
-      const price = priceMatch ? clean(priceMatch[1]) : "";
-
-      let title = priceMatch
-        ? clean(segment.slice(0, priceMatch.index))
-        : clean(segment.replace(/\b(Fully booked|Join waitlist)\b.*$/i, ""));
-
-      // Facilitator is rendered immediately after the price parentheses.
-      let facilitator = "";
-      if (priceMatch) {
-        const afterPrice = clean(segment.slice(priceMatch.index! + priceMatch[0].length));
-        facilitator = clean(afterPrice.replace(/\b(Fully booked|Join waitlist)\b.*$/i, ""));
-      }
-
-      // If there is no price, leave the facilitator blank rather than guessing
-      // from arbitrary uppercase words in a title.
-      const status = /\bFully booked\b/i.test(segment) ? "Fully booked" :
-        /\bJoin waitlist\b/i.test(segment) ? "Join waitlist" : "";
-
-      if (!title) continue;
-
-      const descriptionParts = [
-        price ? `Price: ${price}` : "",
-        facilitator ? `Facilitator: ${facilitator}` : "",
-        status ? `Status: ${status}` : ""
-      ].filter(Boolean);
+      const descriptionParts = [`Price: ${price}`, facilitator ? `Facilitator: ${facilitator}` : "", status ? `Status: ${status}` : ""].filter(Boolean);
 
       found.push({
-        uid: uidFor(`${title}|${start}`),
-        title,
-        start,
-        end,
+        uid: uidFor(`${title}|${start}`), title, start, end,
         location: "Shetlandsgade 3, 1st floor, 2300 Copenhagen, Denmark",
-        description: descriptionParts.join("\n"),
-        url: CALENDAR_URL,
-        source: "dom",
-        confidence: 0.96
+        description: descriptionParts.join("\\n"), url: CALENDAR_URL,
+        source: "dom", confidence: 0.98
       });
+      console.log(`CALENDAR PARSER: event ${date} ${t[0]} — ${title}`);
     }
   }
   return found;
@@ -149,24 +125,18 @@ async function frameText(frame: Frame) {
 
 async function findNextControl(page: Page): Promise<{frame: Frame, locator: ReturnType<Frame["locator"]>} | null> {
   const selectors = [
-    'button[aria-label*="next" i]',
-    'button[title*="next" i]',
-    '[role="button"][aria-label*="next" i]',
-    'a[aria-label*="next" i]',
-    'button[aria-label*="forward" i]',
-    'button[title*="forward" i]',
-    'button:has-text("›")',
-    'button:has-text("→")',
-    '[role="button"]:has-text("›")',
-    '[role="button"]:has-text("→")'
+    'button[aria-label*="next" i]', 'button[title*="next" i]',
+    '[role="button"][aria-label*="next" i]', '[role="button"][title*="next" i]',
+    'a[aria-label*="next" i]', 'a[title*="next" i]',
+    'button[aria-label*="forward" i]', 'button[title*="forward" i]',
+    '[class*="next" i]', '[class*="arrow-right" i]',
+    'button:has-text("›")', 'button:has-text("→")',
+    '[role="button"]:has-text("›")', '[role="button"]:has-text("→")'
   ];
-
   for (const frame of page.frames()) {
     for (const selector of selectors) {
       const loc = frame.locator(selector).first();
-      if (await loc.count().catch(() => 0) && await loc.isVisible().catch(() => false)) {
-        return { frame, locator: loc };
-      }
+      if (await loc.count().catch(() => 0) && await loc.isVisible().catch(() => false)) return { frame, locator: loc };
     }
   }
   return null;
