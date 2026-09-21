@@ -133,7 +133,7 @@ async function clickCalendarEventCards(page: Page): Promise<CalendarEvent[]> {
             location: "Shetlandsgade 3, 1st floor, 2300 Copenhagen, Denmark", description: modalText.slice(0, 10000),
             source: "dom", confidence: 0.9 });
         }
-        await frame.keyboard.press("Escape").catch(() => {});
+        await page.keyboard.press("Escape").catch(() => {});
       } catch {}
     }
   }
