@@ -91,3 +91,7 @@ The service exposes:
 - `/house-of-play.ics` — Google Calendar feed
 
 No database is required.
+
+
+## Diagnostic v3
+This version logs the calendar page, all rendered frames, visible text previews, event-link count, and saves `data/calendar-diagnostic.json` and a screenshot. It intentionally avoids clicking event cards or next controls so a problematic widget cannot hang the service during diagnosis.

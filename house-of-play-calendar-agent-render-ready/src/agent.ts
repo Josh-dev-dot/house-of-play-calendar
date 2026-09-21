@@ -158,9 +158,14 @@ async function clickNext(page: Page) {
 
 async function diagnosticFrames(page: Page) {
   const rows = [] as Array<{url:string;text:string;html:string}>;
-  for (const frame of page.frames()) {
+  console.log(`DIAGNOSTIC: ${page.frames().length} frame(s) detected`);
+  for (const [index, frame] of page.frames().entries()) {
+    console.log(`DIAGNOSTIC: frame ${index}: ${frame.url()}`);
+
     const text = await frameText(frame);
     const html = await frame.locator("body").innerHTML().catch(() => "");
+    console.log(`DIAGNOSTIC: frame ${index}: ${text.length} chars of visible text`);
+    console.log(`DIAGNOSTIC: frame ${index} text preview: ${text.slice(0, 1000).replace(/\s+/g, " ")}`);
     rows.push({ url: frame.url(), text: text.slice(0, 12000), html: html.slice(0, 30000) });
   }
   await fs.writeFile(path.join(DATA, "calendar-diagnostic.json"), JSON.stringify(rows, null, 2));
@@ -174,39 +179,26 @@ export async function crawl() {
   const all = new Map<string, CalendarEvent>();
   const visitedStates = new Set<string>();
   try {
+    console.log(`DIAGNOSTIC: opening ${CALENDAR_URL}`);
     await page.goto(CALENDAR_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForTimeout(3500);
+    console.log(`DIAGNOSTIC: page loaded: ${page.url()}`);
+    console.log(`DIAGNOSTIC: title: ${await page.title().catch(() => "")}`);
+    await page.waitForTimeout(5000);
 
+    console.log("DIAGNOSTIC: after initial wait");
     await diagnosticFrames(page);
+    await screenshot(page, "diagnostic-calendar");
 
-    // First, harvest event URLs from the actual rendered calendar (including YOGO frames).
-    for (const url of await collectRenderedCalendarLinks(page)) {
-      try { const event = await scrapeEventPage(eventPage, url); if (event) all.set(event.uid, event); }
-      catch (e) { console.warn("Event page failed", url, e); }
-    }
+    const renderedLinks = await collectRenderedCalendarLinks(page);
+    console.log(`DIAGNOSTIC: House of Play event links found: ${renderedLinks.length}`);
+    for (const url of renderedLinks.slice(0, 30)) console.log(`DIAGNOSTIC: event link: ${url}`);
 
-    const maxSteps = Math.min(WEEKS * 5 + 10, 70);
-    for (let step = 0; step < maxSteps; step++) {
-      const textParts = await Promise.all(page.frames().map(frameText));
-      const text = clean(textParts.join(" "));
-      const stateHash = crypto.createHash("sha1").update(text).digest("hex");
-      if (visitedStates.has(stateHash)) break;
-      visitedStates.add(stateHash);
+    const bodyText = clean(await page.locator("body").innerText().catch(() => ""));
+    console.log(`DIAGNOSTIC: top-level body text (${bodyText.length} chars): ${bodyText.slice(0, 3000)}`);
 
-      await screenshot(page, `step-${String(step).padStart(2, "0")}`);
-
-      for (const event of await extractCalendarCards(page)) all.set(event.uid, event);
-      for (const event of await clickCalendarEventCards(page)) all.set(event.uid, event);
-
-      // Re-scan links after each calendar state because YOGO can change them as the month changes.
-      for (const url of await collectRenderedCalendarLinks(page)) {
-        try { const event = await scrapeEventPage(eventPage, url); if (event) all.set(event.uid, event); }
-        catch {}
-      }
-
-      const clicked = await clickNext(page);
-      if (!clicked) break;
-    }
+    // Intentionally do not click calendar events or next-month controls in this version.
+    // The goal is to identify the actual rendered calendar structure without hanging the service.
+    console.log("DIAGNOSTIC: skipping event clicks/navigation for this diagnostic crawl");
   } finally { await browser.close(); }
 
   const events = [...all.values()].sort((a, b) => a.start.localeCompare(b.start));
