@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>House of Play Calendar Agent</title>
+<style>
+body{margin:0;background:#f5f2f7;color:#201b22;font:15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;min-height:100vh;padding:24px}
+.card{background:white;width:min(720px,100%);padding:36px;border-radius:24px;box-shadow:0 20px 70px #20152514;border:1px solid #e4dfe7}
+.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#7c6e82;font-weight:700}
+h1{font-size:32px;letter-spacing:-.04em;margin:8px 0 10px}
+p,li{color:#625a65;line-height:1.55}
+.status{margin:24px 0;padding:15px;border-radius:13px;background:#f6f4f7}
+.row{display:flex;gap:8px;margin-top:14px}
+input{flex:1;padding:12px;border:1px solid #ddd6e0;border-radius:10px;background:#faf9fb}
+button{padding:12px 16px;border:0;border-radius:10px;background:#211b25;color:#fff;font-weight:700;cursor:pointer}
+button.secondary{background:#eee9f0;color:#29232d}
+a{color:inherit}
+.small{font-size:13px;color:#8b818d}
+</style>
+</head>
+<body>
+<main class="card">
+<div class="eyebrow">Browser agent</div>
+<h1>House of Play → Google Calendar</h1>
+<p>The agent opens the House of Play calendar, reads the visible calendar, advances through it, and stores the discovered events as a standard ICS feed.</p>
+<div class="status" id="status">Loading…</div>
+<div class="row">
+<input id="feed" readonly>
+<button onclick="navigator.clipboard.writeText(feed.value)">Copy feed</button>
+</div>
+<div class="row">
+<button onclick="crawl()">Crawl calendar now</button>
+<a href="/house-of-play.ics"><button class="secondary">Open ICS</button></a>
+</div>
+<h2>Google Calendar</h2>
+<ol>
+<li>Copy the feed URL.</li>
+<li>Google Calendar → Other calendars → + → From URL.</li>
+<li>Paste the URL and add it.</li>
+</ol>
+<p class="small">The agent is designed to crawl 12 weeks by default. Set CRAWL_WEEKS in .env to change that.</p>
+</main>
+<script>
+const feed = location.origin + "/house-of-play.ics";
+document.querySelector("#feed").value = feed;
+async function status(){
+ const r=await fetch("/api/status"); const d=await r.json();
+ document.querySelector("#status").textContent=`${d.events} events · last crawl: ${d.generatedAt ? new Date(d.generatedAt).toLocaleString() : "never"}`;
+}
+async function crawl(){
+ document.querySelector("#status").textContent="Crawling calendar…";
+ const r=await fetch("/api/crawl",{method:"POST"}); const d=await r.json();
+ document.querySelector("#status").textContent=d.ok?`Crawl complete · ${d.events} events`:`Crawl failed: ${d.error}`;
+}
+status();
+</script>
+</body>
+</html>
