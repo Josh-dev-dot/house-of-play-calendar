@@ -43,6 +43,8 @@ function parseWeekEvents(text) {
         return found;
     const now = new Date();
     const candidatesYears = [now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1];
+    const statusRe = /\b(Fully booked|Join waitlist|Few available spots|\d+\s+on waitlist)\b/ig;
+    const locationRe = /Shetlandsgade\s+3.*?(?=\s+(?:Sign up|Fully booked|Join waitlist|Few available spots|\d+\s+on waitlist|$))/i;
     for (let d = 0; d < days.length; d++) {
         const match = days[d];
         const dayNum = Number(match[2]);
@@ -69,17 +71,35 @@ function parseWeekEvents(text) {
             let segment = clean(block.slice(afterTime, nextTime));
             if (!segment)
                 continue;
-            const status = /\bFully booked\b/i.test(segment) ? "Fully booked" :
-                /\bJoin waitlist\b/i.test(segment) ? "Join waitlist" : "";
-            segment = segment.replace(/\bSign up\b/gi, "").replace(/\bFully booked\b/gi, "").replace(/\bJoin waitlist\b/gi, "").trim();
+            // Remove UI actions and status labels from the event payload.
+            const statuses = [...segment.matchAll(statusRe)].map(m => clean(m[1]));
+            const status = statuses.length ? statuses[statuses.length - 1] : "";
+            segment = segment
+                .replace(/\bSign up\b/gi, "")
+                .replace(statusRe, "")
+                .trim();
+            // The rendered calendar sometimes appends the venue/footer after the event data.
+            segment = segment.replace(locationRe, "").trim();
+            segment = segment.replace(/\s+(?:Shetlandsgade\s+3|House of Play).*/i, "").trim();
             const priceMatch = segment.match(/\(([^)]*(?:kr|free|per couple)[^)]*)\)/i);
-            if (!priceMatch) {
-                console.log(`CALENDAR PARSER: skipped time ${t[0]} because no price block: ${segment.slice(0, 160)}`);
-                continue;
+            let title = "";
+            let price = "";
+            let facilitator = "";
+            if (priceMatch) {
+                price = clean(priceMatch[1]);
+                title = clean(segment.slice(0, priceMatch.index));
+                facilitator = clean(segment.slice((priceMatch.index ?? 0) + priceMatch[0].length));
             }
-            const price = clean(priceMatch[1]);
-            const title = clean(segment.slice(0, priceMatch.index));
-            const facilitator = clean(segment.slice((priceMatch.index ?? 0) + priceMatch[0].length));
+            else {
+                // Price is optional. Do NOT discard the event just because no price block exists.
+                title = clean(segment);
+            }
+            // Clean common calendar UI remnants from facilitator/title fields.
+            facilitator = facilitator
+                .replace(/\b(?:Free|Few available spots|Fully booked|Join waitlist)\b/gi, "")
+                .replace(/\s{2,}/g, " ")
+                .trim();
+            title = title.replace(/\s{2,}/g, " ").trim();
             if (!title)
                 continue;
             const startH = Number(t[1]), startM = Number(t[2]);
@@ -92,14 +112,18 @@ function parseWeekEvents(text) {
                 endDate = next.toISOString().slice(0, 10);
             }
             const end = localIso(endDate, endH, endM);
-            const descriptionParts = [`Price: ${price}`, facilitator ? `Facilitator: ${facilitator}` : "", status ? `Status: ${status}` : ""].filter(Boolean);
+            const descriptionParts = [
+                price ? `Price: ${price}` : "",
+                facilitator ? `Facilitator: ${facilitator}` : "",
+                status ? `Status: ${status}` : ""
+            ].filter(Boolean);
             found.push({
                 uid: uidFor(`${title}|${start}`), title, start, end,
                 location: "Shetlandsgade 3, 1st floor, 2300 Copenhagen, Denmark",
                 description: descriptionParts.join("\\n"), url: CALENDAR_URL,
                 source: "dom", confidence: 0.98
             });
-            console.log(`CALENDAR PARSER: event ${date} ${t[0]} — ${title}`);
+            console.log(`CALENDAR PARSER: event ${date} ${t[0]} — ${title}${price ? ` (${price})` : ""}`);
         }
     }
     return found;

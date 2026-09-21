@@ -3,7 +3,7 @@ services:
     name: house-of-play-calendar
     runtime: node
     plan: free
-    buildCommand: npm install && npx playwright install --with-deps chromium && npm run build
+    buildCommand: npm install && npx playwright install chromium && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
@@ -12,3 +12,5 @@ services:
         value: 12
       - key: HOUSE_OF_PLAY_CALENDAR
         value: https://www.houseofplay.dk/calendar
+      - key: REFRESH_MS
+        value: 21600000

@@ -9,6 +9,8 @@ import { CalendarEvent } from "./types.js";
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DATA = path.resolve("data");
+const REFRESH_MS = Number(process.env.REFRESH_MS || 6 * 60 * 60 * 1000);
+let crawlInProgress = false;
 
 async function readEvents(): Promise<CalendarEvent[]> {
   try {
@@ -23,8 +25,29 @@ app.use(express.static("public"));
 
 app.get("/health", (_req, res) => res.status(200).send("ok"));
 
+async function refreshIfStale() {
+  if (crawlInProgress) return;
+  let stale = true;
+  try {
+    const raw = await fs.readFile(path.join(DATA, "events.json"), "utf8");
+    const generatedAt = JSON.parse(raw).generatedAt;
+    stale = !generatedAt || (Date.now() - new Date(generatedAt).getTime() > REFRESH_MS);
+  } catch {}
+  if (!stale) return;
+  crawlInProgress = true;
+  try {
+    console.log("Calendar cache is stale; refreshing...");
+    await crawl();
+  } catch (e) {
+    console.error("Refresh failed; keeping existing cache:", e);
+  } finally {
+    crawlInProgress = false;
+  }
+}
+
 app.get("/house-of-play.ics", async (_req, res) => {
   try {
+    await refreshIfStale();
     const events = await readEvents();
     const ics = makeIcs(events);
     res.setHeader("Content-Type", "text/calendar; charset=utf-8");
